@@ -1,9 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
 const axios = require("axios");
 const cron = require("node-cron");
-const { google } = require("googleapis");
 require("dotenv").config();
 const { Resend } = require("resend");
 
@@ -20,36 +18,6 @@ let responses = {};
 let emailsSent = 0;
 let leads = [];
 
-/* ================= GOOGLE OAUTH CONFIG ================= */
-
-const OAuth2 = google.auth.OAuth2;
-
-const oauth2Client = new OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  "https://developers.google.com/oauthplayground",
-);
-
-oauth2Client.setCredentials({
-  refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-});
-
-async function createTransporter() {
-  const accessToken = await oauth2Client.getAccessToken();
-
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      type: "OAuth2",
-      user: process.env.EMAIL_USER,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-      accessToken: accessToken.token,
-    },
-  });
-}
-
 /* ================= FOLLOWUP SCHEDULE ================= */
 
 const FOLLOWUPS = [
@@ -62,14 +30,15 @@ const FOLLOWUPS = [
 /* ================= SEND EMAIL ROUTE ================= */
 
 app.post("/send-email", async (req, res) => {
+
   const { emails, subject, message, leadId } = req.body;
 
   try {
-    const transporter = await createTransporter();
 
     for (const email of emails) {
+
       await resend.emails.send({
-        from: "AGE CRM <onboarding@resend.dev>",
+        from: process.env.EMAIL_FROM,
         to: email,
         subject: subject || "AGE Follow Up",
         html: message,
@@ -80,34 +49,43 @@ app.post("/send-email", async (req, res) => {
       if (leadId) {
         leads.push({
           id: leadId,
-          email: email,
+          email,
           stage: 0,
           nextFollowup: Date.now() + FOLLOWUPS[1].delay * 86400000,
           status: "pending",
           message,
         });
       }
+
     }
 
     res.send({ success: true });
+
   } catch (err) {
-    console.error("EMAIL ERROR FULL:", err);
+
+    console.error("EMAIL ERROR:", err);
+
     res.status(500).send({
       success: false,
-      error: err.message,
+      error: err.message
     });
+
   }
+
 });
 
 /* ================= FOLLOWUP CRON ================= */
 
 cron.schedule("* * * * *", async () => {
+
   const now = Date.now();
 
   for (const lead of leads) {
+
     if (lead.status !== "pending") continue;
 
     if (lead.nextFollowup <= now) {
+
       const stage = lead.stage + 1;
 
       if (stage >= FOLLOWUPS.length) {
@@ -116,58 +94,80 @@ cron.schedule("* * * * *", async () => {
       }
 
       try {
-        const transporter = await createTransporter();
 
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
+        await resend.emails.send({
+          from: process.env.EMAIL_FROM,
           to: lead.email,
           subject: FOLLOWUPS[stage].subject,
-          html: lead.message,
+          html: lead.message
         });
 
         emailsSent++;
 
         lead.stage = stage;
-        lead.nextFollowup = Date.now() + FOLLOWUPS[stage].delay * 86400000;
+
+        lead.nextFollowup =
+          Date.now() + FOLLOWUPS[stage].delay * 86400000;
 
         console.log("Follow-up sent:", lead.email);
+
       } catch (err) {
+
         console.log("FOLLOWUP ERROR:", err);
+
       }
+
     }
+
   }
+
 });
 
 /* ================= SMS ROUTE ================= */
 
 app.post("/send-sms", async (req, res) => {
+
   const { phones, message } = req.body;
 
   try {
+
     for (const phone of phones) {
-      const response = await axios.post("https://textbelt.com/text", {
-        phone,
-        message,
-        key: "textbelt",
-      });
+
+      const response = await axios.post(
+        "https://textbelt.com/text",
+        {
+          phone,
+          message,
+          key: "textbelt",
+        }
+      );
 
       console.log("SMS RESPONSE:", response.data);
+
     }
 
     res.send({ success: true });
+
   } catch (err) {
+
     console.log("SMS ERROR:", err);
+
     res.send({ success: false });
+
   }
+
 });
 
 /* ================= TITLE EXTRACT ================= */
 
 app.post("/extract-title", async (req, res) => {
+
   const { url } = req.body;
 
   try {
+
     const response = await axios.get(url);
+
     const html = response.data;
 
     const titleMatch = html.match(/<title>(.*?)<\/title>/i);
@@ -179,15 +179,21 @@ app.post("/extract-title", async (req, res) => {
     }
 
     res.send({ title });
+
   } catch (err) {
+
     console.log("TITLE FETCH ERROR:", err);
+
     res.send({ title: null });
+
   }
+
 });
 
 /* ================= RESPONSE TRACKING ================= */
 
 app.get("/response", (req, res) => {
+
   const { lead, status } = req.query;
 
   if (!lead || !status) {
@@ -212,30 +218,38 @@ app.get("/response", (req, res) => {
     </body>
   </html>
   `);
+
 });
 
 /* ================= FETCH RESPONSES ================= */
 
 app.get("/responses", (req, res) => {
+
   res.json(responses);
+
 });
 
 /* ================= STATS ================= */
 
 app.get("/stats", (req, res) => {
+
   const responseCount = Object.keys(responses).length;
 
-  const interested = Object.values(responses).filter((r) => r === "yes").length;
+  const interested =
+    Object.values(responses).filter(r => r === "yes").length;
 
   const conversionRate =
-    emailsSent === 0 ? 0 : Math.round((interested / emailsSent) * 100);
+    emailsSent === 0
+      ? 0
+      : Math.round((interested / emailsSent) * 100);
 
   res.json({
     emailsSent,
     responses: responseCount,
     interested,
-    conversionRate,
+    conversionRate
   });
+
 });
 
 /* ================= SERVER ================= */
@@ -243,5 +257,7 @@ app.get("/stats", (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
+
   console.log("AGE backend running on port " + PORT);
+
 });
