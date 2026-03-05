@@ -2,8 +2,18 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const cron = require("node-cron");
-require("dotenv").config({ path: ".env" });
 const { Resend } = require("resend");
+require("dotenv").config();
+
+if (!process.env.RESEND_API_KEY) {
+  console.error("❌ RESEND_API_KEY missing");
+  process.exit(1);
+}
+
+if (!process.env.EMAIL_FROM) {
+  console.error("❌ EMAIL_FROM missing");
+  process.exit(1);
+}
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
