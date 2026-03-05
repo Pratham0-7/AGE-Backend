@@ -3,40 +3,51 @@ const cors = require("cors");
 const nodemailer = require("nodemailer");
 const axios = require("axios");
 const cron = require("node-cron");
+const { google } = require("googleapis");
+require("dotenv").config();
 
 const app = express();
-
-require("dotenv").config();
 
 app.use(cors());
 app.use(express.json());
 
 /* ================= STORAGE ================= */
 
-let responses = {}; // { leadId: "yes" | "no" }
+let responses = {};
 let emailsSent = 0;
+let leads = [];
 
-let leads = []; // lead database for followups
+/* ================= GOOGLE OAUTH CONFIG ================= */
 
-/* ================= EMAIL CONFIG ================= */
+const OAuth2 = google.auth.OAuth2;
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
+const oauth2Client = new OAuth2(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  "https://developers.google.com/oauthplayground"
+);
+
+oauth2Client.setCredentials({
+  refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
 });
 
-transporter.verify((error) => {
-  if (error) {
-    console.log("SMTP ERROR:", error);
-  } else {
-    console.log("SMTP READY");
-  }
-});
+async function createTransporter() {
+
+  const accessToken = await oauth2Client.getAccessToken();
+
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      type: "OAuth2",
+      user: process.env.EMAIL_USER,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+      accessToken: accessToken.token,
+    },
+  });
+
+}
 
 /* ================= FOLLOWUP SCHEDULE ================= */
 
@@ -50,20 +61,23 @@ const FOLLOWUPS = [
 /* ================= SEND EMAIL ROUTE ================= */
 
 app.post("/send-email", async (req, res) => {
+
   const { emails, subject, message, leadId } = req.body;
 
   try {
+
+    const transporter = await createTransporter();
+
     for (const email of emails) {
+
       await transporter.sendMail({
-        from: "076pandeypratham@gmail.com",
+        from: process.env.EMAIL_USER,
         to: email,
         subject: subject || "AGE Follow Up",
         html: message,
       });
 
       emailsSent++;
-
-      /* store lead for followups */
 
       if (leadId) {
         leads.push({
@@ -75,27 +89,32 @@ app.post("/send-email", async (req, res) => {
           message,
         });
       }
+
     }
 
     res.send({ success: true });
-  } catch (err) {
-    console.log("EMAIL ERROR:", err);
 
+  } catch (err) {
+
+    console.log("EMAIL ERROR:", err);
     res.send({ success: false });
+
   }
+
 });
 
 /* ================= FOLLOWUP CRON ================= */
 
-/* runs every minute */
-
 cron.schedule("* * * * *", async () => {
+
   const now = Date.now();
 
   for (const lead of leads) {
+
     if (lead.status !== "pending") continue;
 
     if (lead.nextFollowup <= now) {
+
       const stage = lead.stage + 1;
 
       if (stage >= FOLLOWUPS.length) {
@@ -104,8 +123,11 @@ cron.schedule("* * * * *", async () => {
       }
 
       try {
+
+        const transporter = await createTransporter();
+
         await transporter.sendMail({
-          from: "076pandeypratham@gmail.com",
+          from: process.env.EMAIL_USER,
           to: lead.email,
           subject: FOLLOWUPS[stage].subject,
           html: lead.message,
@@ -114,24 +136,32 @@ cron.schedule("* * * * *", async () => {
         emailsSent++;
 
         lead.stage = stage;
-
         lead.nextFollowup = Date.now() + FOLLOWUPS[stage].delay * 86400000;
 
         console.log("Follow-up sent:", lead.email);
+
       } catch (err) {
+
         console.log("FOLLOWUP ERROR:", err);
+
       }
+
     }
+
   }
+
 });
 
 /* ================= SMS ROUTE ================= */
 
 app.post("/send-sms", async (req, res) => {
+
   const { phones, message } = req.body;
 
   try {
+
     for (const phone of phones) {
+
       const response = await axios.post("https://textbelt.com/text", {
         phone,
         message,
@@ -139,24 +169,29 @@ app.post("/send-sms", async (req, res) => {
       });
 
       console.log("SMS RESPONSE:", response.data);
+
     }
 
     res.send({ success: true });
-  } catch (err) {
-    console.log("SMS ERROR:", err);
 
+  } catch (err) {
+
+    console.log("SMS ERROR:", err);
     res.send({ success: false });
+
   }
+
 });
 
 /* ================= TITLE EXTRACT ================= */
 
 app.post("/extract-title", async (req, res) => {
+
   const { url } = req.body;
 
   try {
-    const response = await axios.get(url);
 
+    const response = await axios.get(url);
     const html = response.data;
 
     const titleMatch = html.match(/<title>(.*?)<\/title>/i);
@@ -168,16 +203,20 @@ app.post("/extract-title", async (req, res) => {
     }
 
     res.send({ title });
-  } catch (err) {
-    console.log("TITLE FETCH ERROR:", err);
 
+  } catch (err) {
+
+    console.log("TITLE FETCH ERROR:", err);
     res.send({ title: null });
+
   }
+
 });
 
 /* ================= RESPONSE TRACKING ================= */
 
 app.get("/response", (req, res) => {
+
   const { lead, status } = req.query;
 
   if (!lead || !status) {
@@ -185,8 +224,6 @@ app.get("/response", (req, res) => {
   }
 
   responses[lead] = status;
-
-  /* stop followups */
 
   const leadData = leads.find((l) => l.id === lead);
 
@@ -204,6 +241,7 @@ app.get("/response", (req, res) => {
     </body>
   </html>
   `);
+
 });
 
 /* ================= FETCH RESPONSES ================= */
@@ -215,12 +253,16 @@ app.get("/responses", (req, res) => {
 /* ================= STATS ================= */
 
 app.get("/stats", (req, res) => {
+
   const responseCount = Object.keys(responses).length;
 
-  const interested = Object.values(responses).filter((r) => r === "yes").length;
+  const interested = Object.values(responses)
+    .filter((r) => r === "yes").length;
 
   const conversionRate =
-    emailsSent === 0 ? 0 : Math.round((interested / emailsSent) * 100);
+    emailsSent === 0
+      ? 0
+      : Math.round((interested / emailsSent) * 100);
 
   res.json({
     emailsSent,
@@ -228,9 +270,10 @@ app.get("/stats", (req, res) => {
     interested,
     conversionRate,
   });
+
 });
 
-/* ================= SERVER START ================= */
+/* ================= SERVER ================= */
 
 const PORT = process.env.PORT || 5000;
 
