@@ -5,6 +5,9 @@ const axios = require("axios");
 const cron = require("node-cron");
 const { google } = require("googleapis");
 require("dotenv").config();
+const { Resend } = require("resend");
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 
@@ -65,8 +68,8 @@ app.post("/send-email", async (req, res) => {
     const transporter = await createTransporter();
 
     for (const email of emails) {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
+      await resend.emails.send({
+        from: "AGE CRM <onboarding@resend.dev>",
         to: email,
         subject: subject || "AGE Follow Up",
         html: message,
