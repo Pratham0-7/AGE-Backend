@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
 const cron = require("node-cron");
-require("dotenv").config();
+require("dotenv").config({ path: ".env" });
 const { Resend } = require("resend");
 
 const resend = new Resend(process.env.RESEND_API_KEY);
